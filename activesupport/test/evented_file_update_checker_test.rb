@@ -35,46 +35,48 @@ class EventedFileUpdateCheckerTest < ActiveSupport::TestCase
     wait
   end
 
-  test 'notifies forked processes' do
-    FileUtils.touch(tmpfiles)
+  unless defined?(JRUBY_VERSION)
+    test 'notifies forked processes' do
+      FileUtils.touch(tmpfiles)
 
-    checker = new_checker(tmpfiles) { }
-    assert !checker.updated?
-
-    # Pipes used for flow controll across fork.
-    boot_reader,  boot_writer  = IO.pipe
-    touch_reader, touch_writer = IO.pipe
-
-    pid = fork do
-      assert checker.updated?
-
-      # Clear previous check value.
-      checker.execute
+      checker = new_checker(tmpfiles) { }
       assert !checker.updated?
 
-      # Fork is booted, ready for file to be touched
-      # notify parent process.
-      boot_writer.write("booted")
+      # Pipes used for flow controll across fork.
+      boot_reader,  boot_writer  = IO.pipe
+      touch_reader, touch_writer = IO.pipe
 
-      # Wait for parent process to signal that file
-      # has been touched.
-      IO.select([touch_reader])
+      pid = fork do
+       assert checker.updated?
+
+       # Clear previous check value.
+       checker.execute
+       assert !checker.updated?
+
+       # Fork is booted, ready for file to be touched
+       # notify parent process.
+       boot_writer.write("booted")
+
+       # Wait for parent process to signal that file
+       # has been touched.
+       IO.select([touch_reader])
+
+       assert checker.updated?
+      end
+
+      assert pid
+
+      # Wait for fork to be booted before touching files.
+      IO.select([boot_reader])
+      touch(tmpfiles)
+
+      # Notify fork that files have been touched.
+      touch_writer.write("touched")
 
       assert checker.updated?
+
+      Process.wait(pid)
     end
-
-    assert pid
-
-    # Wait for fork to be booted before touching files.
-    IO.select([boot_reader])
-    touch(tmpfiles)
-
-    # Notify fork that files have been touched.
-    touch_writer.write("touched")
-
-    assert checker.updated?
-
-    Process.wait(pid)
   end
 end
 
